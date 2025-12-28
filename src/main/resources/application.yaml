@@ -1,0 +1,70 @@
+# Enterprise Batch Processing Application Configuration
+# Environment: ${mule.env}
+
+# Scheduler Configuration
+scheduler:
+  billing:
+    cron: "0 0 23 * * ?"
+    timezone: "UTC"
+    enabled: "true"
+  invoice:
+    cron: "0 0 2 1 * ?"
+    timezone: "UTC"
+    enabled: "true"
+
+# Batch Processing Configuration
+batch:
+  billing:
+    blockSize: "100"
+    maxFailedRecords: "50"
+    aggregatorSize: "100"
+  invoice:
+    blockSize: "50"
+    maxFailedRecords: "25"
+    aggregatorSize: "50"
+
+# Database Configuration
+db:
+  source:
+    host: "localhost"
+    port: "3306"
+    database: "source_db"
+    minPoolSize: "5"
+    maxPoolSize: "20"
+    maxWait: "10"
+    maxWaitUnit: "SECONDS"
+  target:
+    host: "localhost"
+    port: "3306"
+    database: "target_db"
+    minPoolSize: "5"
+    maxPoolSize: "20"
+    maxWait: "10"
+    maxWaitUnit: "SECONDS"
+
+# Retry Configuration
+retry:
+  maxAttempts: "3"
+  intervalMs: "5000"
+  reconnectFrequency: "5000"
+  reconnectAttempts: "5"
+
+# Object Store Configuration
+objectstore:
+  watermark:
+    maxEntries: "1000"
+    entryTtl: "30"
+    entryTtlUnit: "DAYS"
+  dlq:
+    maxEntries: "5000"
+    entryTtl: "7"
+    entryTtlUnit: "DAYS"
+  lock:
+    maxEntries: "100"
+    entryTtl: "1"
+    entryTtlUnit: "HOURS"
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  correlationIdEnabled: "true"

@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- ============================================== -->
+	<!-- BATCH WATERMARK SUBFLOWS                      -->
+	<!-- Watermark management for incremental processing -->
+	<!-- ============================================== -->
+
+	<!-- Generic Retrieve Watermark -->
+	<sub-flow name="retrieve-watermark-subflow" doc:name="Retrieve Watermark Subflow">
+		<logger level="DEBUG" doc:name="Log Retrieving Watermark"
+			message='#["[DEBUG] Retrieving watermark | Key: " ++ vars.watermarkKey]' />
+		
+		<os:retrieve doc:name="Retrieve Watermark" 
+			key="#[vars.watermarkKey]" 
+			objectStore="Watermark_Object_Store"
+			target="watermarkValue">
+			<os:default-value>#[vars.defaultWatermark default (now() - |P1D|)]</os:default-value>
+		</os:retrieve>
+		
+		<logger level="DEBUG" doc:name="Log Watermark Value"
+			message='#["[DEBUG] Watermark retrieved | Key: " ++ vars.watermarkKey ++ " | Value: " ++ (vars.watermarkValue as String)]' />
+	</sub-flow>
+
+	<!-- Generic Store Watermark -->
+	<sub-flow name="store-watermark-subflow" doc:name="Store Watermark Subflow">
+		<logger level="DEBUG" doc:name="Log Storing Watermark"
+			message='#["[DEBUG] Storing watermark | Key: " ++ vars.watermarkKey ++ " | Value: " ++ (vars.newWatermarkValue as String)]' />
+		
+		<os:store doc:name="Store Watermark" 
+			key="#[vars.watermarkKey]" 
+			objectStore="Watermark_Object_Store">
+			<os:value>#[vars.newWatermarkValue]</os:value>
+		</os:store>
+		
+		<logger level="INFO" doc:name="Log Watermark Updated"
+			message='#["[INFO] Watermark updated | Key: " ++ vars.watermarkKey ++ " | NewValue: " ++ (vars.newWatermarkValue as String)]' />
+	</sub-flow>
+
+	<!-- Reset Watermark (for reprocessing) -->
+	<sub-flow name="reset-watermark-subflow" doc:name="Reset Watermark Subflow">
+		<logger level="INFO" doc:name="Log Resetting Watermark"
+			message='#["[INFO] Resetting watermark | Key: " ++ vars.watermarkKey]' />
+		
+		<try doc:name="Try Reset Watermark">
+			<os:remove doc:name="Remove Watermark" 
+				key="#[vars.watermarkKey]" 
+				objectStore="Watermark_Object_Store" />
+			
+			<logger level="INFO" doc:name="Log Watermark Reset"
+				message='#["[INFO] Watermark reset successfully | Key: " ++ vars.watermarkKey]' />
+			
+			<error-handler>
+				<on-error-continue type="OS:KEY_NOT_FOUND" doc:name="Handle Key Not Found">
+					<logger level="WARN" doc:name="Log Key Not Found"
+						message='#["[WARN] Watermark key not found during reset | Key: " ++ vars.watermarkKey]' />
+				</on-error-continue>
+			</error-handler>
+		</try>
+	</sub-flow>
+
+	<!-- Get All Watermarks (for monitoring) -->
+	<sub-flow name="get-all-watermarks-subflow" doc:name="Get All Watermarks Subflow">
+		<logger level="DEBUG" doc:name="Log Getting All Watermarks"
+			message='#["[DEBUG] Retrieving all watermarks for monitoring"]' />
+		
+		<set-variable variableName="watermarks" value="#[{}]" doc:name="Initialize Watermarks Map" />
+		
+		<!-- Retrieve billing watermark -->
+		<try doc:name="Try Get Billing Watermark">
+			<os:retrieve doc:name="Get Billing Watermark" 
+				key="billing-watermark" 
+				objectStore="Watermark_Object_Store"
+				target="billingWatermark">
+				<os:default-value>#[null]</os:default-value>
+			</os:retrieve>
+			<error-handler>
+				<on-error-continue type="ANY" doc:name="Handle Error">
+					<set-variable variableName="billingWatermark" value="#[null]" doc:name="Set Null" />
+				</on-error-continue>
+			</error-handler>
+		</try>
+		
+		<!-- Retrieve invoice watermark -->
+		<try doc:name="Try Get Invoice Watermark">
+			<os:retrieve doc:name="Get Invoice Watermark" 
+				key="invoice-watermark" 
+				objectStore="Watermark_Object_Store"
+				target="invoiceWatermark">
+				<os:default-value>#[null]</os:default-value>
+			</os:retrieve>
+			<error-handler>
+				<on-error-continue type="ANY" doc:name="Handle Error">
+					<set-variable variableName="invoiceWatermark" value="#[null]" doc:name="Set Null" />
+				</on-error-continue>
+			</error-handler>
+		</try>
+		
+		<set-payload doc:name="Set Watermarks Payload" value="#[{
+			billing: vars.billingWatermark,
+			invoice: vars.invoiceWatermark,
+			retrievedAt: now()
+		}]" />
+	</sub-flow>
+
+	<!-- Validate Watermark Consistency -->
+	<sub-flow name="validate-watermark-subflow" doc:name="Validate Watermark Subflow">
+		<logger level="DEBUG" doc:name="Log Validating Watermark"
+			message='#["[DEBUG] Validating watermark | Key: " ++ vars.watermarkKey]' />
+		
+		<os:retrieve doc:name="Retrieve Current Watermark" 
+			key="#[vars.watermarkKey]" 
+			objectStore="Watermark_Object_Store"
+			target="currentWatermark">
+			<os:default-value>#[null]</os:default-value>
+		</os:retrieve>
+		
+		<choice doc:name="Check Watermark Validity">
+			<when expression="#[vars.currentWatermark == null]">
+				<set-variable variableName="watermarkValid" value="#[false]" doc:name="Set Invalid" />
+				<set-variable variableName="watermarkMessage" value="Watermark not found" doc:name="Set Message" />
+			</when>
+			<when expression="#[vars.currentWatermark > now()]">
+				<set-variable variableName="watermarkValid" value="#[false]" doc:name="Set Invalid Future" />
+				<set-variable variableName="watermarkMessage" value="Watermark is in the future" doc:name="Set Future Message" />
+			</when>
+			<otherwise>
+				<set-variable variableName="watermarkValid" value="#[true]" doc:name="Set Valid" />
+				<set-variable variableName="watermarkMessage" value="Watermark is valid" doc:name="Set Valid Message" />
+			</otherwise>
+		</choice>
+		
+		<logger level="DEBUG" doc:name="Log Validation Result"
+			message='#["[DEBUG] Watermark validation | Key: " ++ vars.watermarkKey ++ " | Valid: " ++ vars.watermarkValid ++ " | Message: " ++ vars.watermarkMessage]' />
+	</sub-flow>
+
+</mule>

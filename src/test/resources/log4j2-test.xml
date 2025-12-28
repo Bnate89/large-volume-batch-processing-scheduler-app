@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+
+    <!-- MUnit Test Log4j2 Configuration -->
+    
+    <Properties>
+        <Property name="LOG_PATTERN">%-5p %d{HH:mm:ss.SSS} [%t] [%X{correlationId}] %c{1}: %m%n</Property>
+    </Properties>
+
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="${LOG_PATTERN}"/>
+        </Console>
+    </Appenders>
+
+    <Loggers>
+        <!-- Suppress noisy HTTP loggers -->
+        <AsyncLogger name="org.mule.service.http" level="WARN"/>
+        <AsyncLogger name="org.mule.extension.http" level="WARN"/>
+
+        <!-- Reduce startup noise -->
+        <AsyncLogger name="com.mulesoft.mule.runtime.plugin" level="WARN"/>
+        <AsyncLogger name="org.mule.maven.client" level="WARN"/>
+        <AsyncLogger name="org.mule.runtime.core.internal.util" level="WARN"/>
+        <AsyncLogger name="org.quartz" level="WARN"/>
+        <AsyncLogger name="org.mule.munit.plugins.coverage.server" level="WARN"/>
+        
+        <!-- Database Connector -->
+        <AsyncLogger name="org.mule.extension.db" level="INFO"/>
+        
+        <!-- Object Store -->
+        <AsyncLogger name="org.mule.extension.objectstore" level="INFO"/>
+        
+        <!-- Batch Processing -->
+        <AsyncLogger name="org.mule.runtime.module.extension.internal.runtime.source.poll" level="WARN"/>
+
+        <!-- Mule logger -->
+        <AsyncLogger name="org.mule.runtime.core.internal.processor.LoggerMessageProcessor" level="INFO"/>
+
+        <AsyncRoot level="INFO">
+            <AppenderRef ref="Console"/>
+        </AsyncRoot>
+    </Loggers>
+
+</Configuration>

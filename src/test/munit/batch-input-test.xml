@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+		http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+
+	<munit:config name="batch-input-test.xml" />
+
+	<!-- ============================================== -->
+	<!-- BATCH INPUT TESTS                             -->
+	<!-- ============================================== -->
+
+	<munit:test name="test-batch-input-billing-with-records" 
+		doc:name="Test Batch Input Billing With Records"
+		description="Verify billing records are fetched correctly from source database">
+		
+		<munit:behavior>
+			<!-- Mock database select for billing records -->
+			<munit-tools:mock-when processor="db:select">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Select Billing Records" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value="#[[
+						{
+							'id': 1,
+							'customer_id': 'CUST001',
+							'account_number': 'ACC001',
+							'billing_period_start': now() - |P30D|,
+							'billing_period_end': now(),
+							'usage_amount': 150.50,
+							'rate_plan_id': 'PLAN001',
+							'status': 'PENDING',
+							'created_at': now() - |P30D|,
+							'updated_at': now() - |P1D|
+						},
+						{
+							'id': 2,
+							'customer_id': 'CUST002',
+							'account_number': 'ACC002',
+							'billing_period_start': now() - |P30D|,
+							'billing_period_end': now(),
+							'usage_amount': 275.00,
+							'rate_plan_id': 'PLAN002',
+							'status': 'PENDING',
+							'created_at': now() - |P30D|,
+							'updated_at': now() - |P2D|
+						}
+					]]" mediaType="application/java" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-variable variableName="jobId" value="#[uuid()]" doc:name="Set Job ID" />
+			<set-variable variableName="lastProcessedTimestamp" value="#[now() - |P7D|]" doc:name="Set Watermark" />
+			<flow-ref name="batch-input-billing-subflow" doc:name="Fetch Billing Records" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[sizeOf(payload)]" 
+				is="#[MunitTools::equalTo(2)]" 
+				message="Should return 2 billing records" />
+			<munit-tools:assert-that 
+				expression="#[payload[0].customer_id]" 
+				is="#[MunitTools::equalTo('CUST001')]" 
+				message="First record should have customer_id CUST001" />
+			<munit-tools:assert-that 
+				expression="#[vars.maxProcessedTimestamp != null]" 
+				is="#[MunitTools::equalTo(true)]" 
+				message="Max processed timestamp should be set" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-batch-input-billing-empty-result" 
+		doc:name="Test Batch Input Billing Empty Result"
+		description="Verify handling when no billing records are found">
+		
+		<munit:behavior>
+			<!-- Mock database select returning empty result -->
+			<munit-tools:mock-when processor="db:select">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Select Billing Records" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value="#[[]]" mediaType="application/java" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-variable variableName="jobId" value="#[uuid()]" doc:name="Set Job ID" />
+			<set-variable variableName="lastProcessedTimestamp" value="#[now()]" doc:name="Set Watermark" />
+			<flow-ref name="batch-input-billing-subflow" doc:name="Fetch Billing Records" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[sizeOf(payload)]" 
+				is="#[MunitTools::equalTo(0)]" 
+				message="Should return empty array when no records" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-batch-input-invoice-with-records" 
+		doc:name="Test Batch Input Invoice With Records"
+		description="Verify invoice records are fetched correctly from source database">
+		
+		<munit:behavior>
+			<!-- Mock database select for invoice records -->
+			<munit-tools:mock-when processor="db:select">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Select Invoice Records" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value="#[[
+						{
+							'customer_id': 'CUST001',
+							'customer_name': 'Acme Corporation',
+							'customer_email': 'billing@acme.com',
+							'billing_address': '123 Main St, City, ST 12345',
+							'tax_id': 'TAX123456',
+							'billing_id': 'BILL001',
+							'billing_period_start': now() - |P30D|,
+							'billing_period_end': now(),
+							'total_amount': 1500.00,
+							'tax_amount': 120.00,
+							'status': 'READY_FOR_INVOICE',
+							'created_at': now() - |P30D|,
+							'updated_at': now() - |P1D|
+						}
+					]]" mediaType="application/java" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-variable variableName="jobId" value="#[uuid()]" doc:name="Set Job ID" />
+			<set-variable variableName="lastInvoiceProcessedTimestamp" value="#[now() - |P30D|]" doc:name="Set Watermark" />
+			<flow-ref name="batch-input-invoice-subflow" doc:name="Fetch Invoice Records" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[sizeOf(payload)]" 
+				is="#[MunitTools::equalTo(1)]" 
+				message="Should return 1 invoice record" />
+			<munit-tools:assert-that 
+				expression="#[payload[0].customer_name]" 
+				is="#[MunitTools::equalTo('Acme Corporation')]" 
+				message="Customer name should be Acme Corporation" />
+		</munit:validation>
+	</munit:test>
+
+</mule>

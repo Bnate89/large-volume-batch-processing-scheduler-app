@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- ============================================== -->
+	<!-- BILLING BATCH SCHEDULER FLOW                  -->
+	<!-- Triggers end-of-day billing batch processing  -->
+	<!-- ============================================== -->
+	
+	<flow name="billing-scheduler-flow" doc:name="Billing Scheduler Flow">
+		<!-- Scheduler - Cron expression externalized -->
+		<scheduler doc:name="Billing Scheduler">
+			<scheduling-strategy>
+				<cron expression="${scheduler.billing.cron}" timeZone="${scheduler.billing.timezone}" />
+			</scheduling-strategy>
+		</scheduler>
+		
+		<!-- Check if scheduler is enabled -->
+		<choice doc:name="Check Scheduler Enabled">
+			<when expression='#["${scheduler.billing.enabled}" == "true"]'>
+				<!-- Generate unique job execution ID -->
+				<set-variable variableName="jobId" value="#[uuid()]" doc:name="Set Job ID" />
+				<set-variable variableName="jobStartTime" value="#[now()]" doc:name="Set Job Start Time" />
+				<set-variable variableName="jobType" value="BILLING" doc:name="Set Job Type" />
+				
+				<logger level="INFO" doc:name="Log Job Start"
+					message='#["[INFO] Billing batch job started | JobId: " ++ vars.jobId ++ " | StartTime: " ++ (vars.jobStartTime as String {format: \"yyyy-MM-dd HH:mm:ss\"})]' />
+				
+				<!-- Acquire distributed execution lock -->
+				<flow-ref name="acquire-execution-lock-subflow" doc:name="Acquire Execution Lock" />
+				
+				<choice doc:name="Check Lock Acquired">
+					<when expression="#[vars.lockAcquired == true]">
+						<try doc:name="Try Batch Execution">
+							<!-- Store batch state -->
+							<flow-ref name="store-batch-state-subflow" doc:name="Store Batch State" />
+							
+							<!-- Execute billing batch job -->
+							<flow-ref name="billing-batch-job-flow" doc:name="Execute Billing Batch Job" />
+							
+							<!-- Update batch state on completion -->
+							<set-variable variableName="jobStatus" value="COMPLETED" doc:name="Set Job Status Completed" />
+							<flow-ref name="update-batch-state-subflow" doc:name="Update Batch State" />
+							
+							<error-handler>
+								<on-error-continue type="ANY" logException="true" doc:name="Handle Batch Error">
+									<set-variable variableName="jobStatus" value="FAILED" doc:name="Set Job Status Failed" />
+									<flow-ref name="update-batch-state-subflow" doc:name="Update Batch State on Error" />
+									<logger level="ERROR" doc:name="Log Batch Failure"
+										message='#["[ERROR] Billing batch job failed | JobId: " ++ vars.jobId ++ " | Error: " ++ error.description]' />
+								</on-error-continue>
+							</error-handler>
+						</try>
+						
+						<!-- Release execution lock -->
+						<flow-ref name="release-execution-lock-subflow" doc:name="Release Execution Lock" />
+						
+						<set-variable variableName="jobEndTime" value="#[now()]" doc:name="Set Job End Time" />
+						<logger level="INFO" doc:name="Log Job End"
+							message='#["[INFO] Billing batch job completed | JobId: " ++ vars.jobId ++ " | Status: " ++ vars.jobStatus ++ " | Duration: " ++ ((vars.jobEndTime - vars.jobStartTime) as Number {unit: \"seconds\"}) ++ "s"]' />
+					</when>
+					<otherwise>
+						<logger level="WARN" doc:name="Log Lock Not Acquired"
+							message='#["[WARN] Could not acquire execution lock - another instance may be running | JobId: " ++ vars.jobId]' />
+					</otherwise>
+				</choice>
+			</when>
+			<otherwise>
+				<logger level="DEBUG" doc:name="Log Scheduler Disabled"
+					message='#["[DEBUG] Billing scheduler is disabled"]' />
+			</otherwise>
+		</choice>
+		
+		<error-handler ref="global-error-handler" />
+	</flow>
+
+	<!-- ============================================== -->
+	<!-- INVOICE BATCH SCHEDULER FLOW                  -->
+	<!-- Triggers monthly invoice generation           -->
+	<!-- ============================================== -->
+	
+	<flow name="invoice-scheduler-flow" doc:name="Invoice Scheduler Flow">
+		<!-- Scheduler - Monthly cron expression -->
+		<scheduler doc:name="Invoice Scheduler">
+			<scheduling-strategy>
+				<cron expression="${scheduler.invoice.cron}" timeZone="${scheduler.invoice.timezone}" />
+			</scheduling-strategy>
+		</scheduler>
+		
+		<!-- Check if scheduler is enabled -->
+		<choice doc:name="Check Scheduler Enabled">
+			<when expression='#["${scheduler.invoice.enabled}" == "true"]'>
+				<!-- Generate unique job execution ID -->
+				<set-variable variableName="jobId" value="#[uuid()]" doc:name="Set Job ID" />
+				<set-variable variableName="jobStartTime" value="#[now()]" doc:name="Set Job Start Time" />
+				<set-variable variableName="jobType" value="INVOICE" doc:name="Set Job Type" />
+				
+				<logger level="INFO" doc:name="Log Job Start"
+					message='#["[INFO] Invoice batch job started | JobId: " ++ vars.jobId ++ " | StartTime: " ++ (vars.jobStartTime as String {format: \"yyyy-MM-dd HH:mm:ss\"})]' />
+				
+				<!-- Acquire distributed execution lock -->
+				<flow-ref name="acquire-execution-lock-subflow" doc:name="Acquire Execution Lock" />
+				
+				<choice doc:name="Check Lock Acquired">
+					<when expression="#[vars.lockAcquired == true]">
+						<try doc:name="Try Batch Execution">
+							<!-- Store batch state -->
+							<flow-ref name="store-batch-state-subflow" doc:name="Store Batch State" />
+							
+							<!-- Execute invoice batch job -->
+							<flow-ref name="invoice-batch-job-flow" doc:name="Execute Invoice Batch Job" />
+							
+							<!-- Update batch state on completion -->
+							<set-variable variableName="jobStatus" value="COMPLETED" doc:name="Set Job Status Completed" />
+							<flow-ref name="update-batch-state-subflow" doc:name="Update Batch State" />
+							
+							<error-handler>
+								<on-error-continue type="ANY" logException="true" doc:name="Handle Batch Error">
+									<set-variable variableName="jobStatus" value="FAILED" doc:name="Set Job Status Failed" />
+									<flow-ref name="update-batch-state-subflow" doc:name="Update Batch State on Error" />
+									<logger level="ERROR" doc:name="Log Batch Failure"
+										message='#["[ERROR] Invoice batch job failed | JobId: " ++ vars.jobId ++ " | Error: " ++ error.description]' />
+								</on-error-continue>
+							</error-handler>
+						</try>
+						
+						<!-- Release execution lock -->
+						<flow-ref name="release-execution-lock-subflow" doc:name="Release Execution Lock" />
+						
+						<set-variable variableName="jobEndTime" value="#[now()]" doc:name="Set Job End Time" />
+						<logger level="INFO" doc:name="Log Job End"
+							message='#["[INFO] Invoice batch job completed | JobId: " ++ vars.jobId ++ " | Status: " ++ vars.jobStatus ++ " | Duration: " ++ ((vars.jobEndTime - vars.jobStartTime) as Number {unit: \"seconds\"}) ++ "s"]' />
+					</when>
+					<otherwise>
+						<logger level="WARN" doc:name="Log Lock Not Acquired"
+							message='#["[WARN] Could not acquire execution lock - another instance may be running | JobId: " ++ vars.jobId]' />
+					</otherwise>
+				</choice>
+			</when>
+			<otherwise>
+				<logger level="DEBUG" doc:name="Log Scheduler Disabled"
+					message='#["[DEBUG] Invoice scheduler is disabled"]' />
+			</otherwise>
+		</choice>
+		
+		<error-handler ref="global-error-handler" />
+	</flow>
+
+	<!-- ============================================== -->
+	<!-- DISTRIBUTED LOCK MANAGEMENT SUBFLOWS          -->
+	<!-- ============================================== -->
+	
+	<sub-flow name="acquire-execution-lock-subflow" doc:name="Acquire Execution Lock">
+		<set-variable variableName="lockKey" value='#["batch-lock-" ++ vars.jobType]' doc:name="Set Lock Key" />
+		<try doc:name="Try Acquire Lock">
+			<!-- Check if lock exists -->
+			<os:contains doc:name="Check Lock Exists" 
+				key="#[vars.lockKey]" 
+				objectStore="Lock_Object_Store"
+				target="lockExists" />
+			
+			<choice doc:name="Lock Exists Check">
+				<when expression="#[vars.lockExists == false]">
+					<!-- Acquire lock -->
+					<os:store doc:name="Store Lock" 
+						key="#[vars.lockKey]" 
+						objectStore="Lock_Object_Store">
+						<os:value>#[output application/json
+---
+{
+	jobId: vars.jobId,
+	acquiredAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	jobType: vars.jobType
+}]</os:value>
+					</os:store>
+					<set-variable variableName="lockAcquired" value="#[true]" doc:name="Set Lock Acquired True" />
+					<logger level="DEBUG" doc:name="Log Lock Acquired"
+						message='#["[DEBUG] Execution lock acquired | JobId: " ++ vars.jobId ++ " | LockKey: " ++ vars.lockKey]' />
+				</when>
+				<otherwise>
+					<set-variable variableName="lockAcquired" value="#[false]" doc:name="Set Lock Acquired False" />
+				</otherwise>
+			</choice>
+			
+			<error-handler>
+				<on-error-continue type="ANY" doc:name="Handle Lock Error">
+					<set-variable variableName="lockAcquired" value="#[false]" doc:name="Set Lock Acquired False on Error" />
+					<logger level="WARN" doc:name="Log Lock Error"
+						message='#["[WARN] Error acquiring execution lock | JobId: " ++ vars.jobId ++ " | Error: " ++ error.description]' />
+				</on-error-continue>
+			</error-handler>
+		</try>
+	</sub-flow>
+	
+	<sub-flow name="release-execution-lock-subflow" doc:name="Release Execution Lock">
+		<try doc:name="Try Release Lock">
+			<os:remove doc:name="Remove Lock" 
+				key="#[vars.lockKey]" 
+				objectStore="Lock_Object_Store" />
+			<logger level="DEBUG" doc:name="Log Lock Released"
+				message='#["[DEBUG] Execution lock released | JobId: " ++ vars.jobId ++ " | LockKey: " ++ vars.lockKey]' />
+			<error-handler>
+				<on-error-continue type="ANY" doc:name="Handle Release Error">
+					<logger level="WARN" doc:name="Log Release Error"
+						message='#["[WARN] Error releasing execution lock | JobId: " ++ vars.jobId ++ " | Error: " ++ error.description]' />
+				</on-error-continue>
+			</error-handler>
+		</try>
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- BATCH STATE MANAGEMENT SUBFLOWS               -->
+	<!-- ============================================== -->
+	
+	<sub-flow name="store-batch-state-subflow" doc:name="Store Batch State">
+		<os:store doc:name="Store Batch State" 
+			key="#[vars.jobId]" 
+			objectStore="Batch_State_Object_Store">
+			<os:value>#[output application/json
+---
+{
+	jobId: vars.jobId,
+	jobType: vars.jobType,
+	status: "RUNNING",
+	startTime: vars.jobStartTime as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	correlationId: correlationId
+}]</os:value>
+		</os:store>
+	</sub-flow>
+	
+	<sub-flow name="update-batch-state-subflow" doc:name="Update Batch State">
+		<os:store doc:name="Update Batch State" 
+			key="#[vars.jobId]" 
+			objectStore="Batch_State_Object_Store">
+			<os:value>#[output application/json
+---
+{
+	jobId: vars.jobId,
+	jobType: vars.jobType,
+	status: vars.jobStatus,
+	startTime: vars.jobStartTime as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	endTime: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"},
+	correlationId: correlationId
+}]</os:value>
+		</os:store>
+	</sub-flow>
+
+</mule>

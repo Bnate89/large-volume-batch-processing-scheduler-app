@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Configuration status="WARN">
+
+    <!-- Enterprise Batch Processing Application - Log4j2 Configuration -->
+    
+    <Properties>
+        <Property name="APP_NAME">enterprise-batch-processing</Property>
+        <Property name="LOG_PATTERN">%-5p %d{yyyy-MM-dd HH:mm:ss.SSS} [%t] [correlationId: %X{correlationId}] [processor: %X{processorPath}] %c{1}: %m%n</Property>
+        <Property name="LOG_PATTERN_CONSOLE">%-5p %d{HH:mm:ss.SSS} [%t] [%X{correlationId}] %c{1}: %m%n</Property>
+    </Properties>
+
+    <Appenders>
+        <!-- Main Application Log File -->
+        <RollingFile name="file" 
+            fileName="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}${APP_NAME}.log"
+            filePattern="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}${APP_NAME}-%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="${LOG_PATTERN}"/>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="50 MB"/>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+        
+        <!-- Batch Processing Specific Log File -->
+        <RollingFile name="batchLog" 
+            fileName="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}${APP_NAME}-batch.log"
+            filePattern="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}${APP_NAME}-batch-%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="${LOG_PATTERN}"/>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="100 MB"/>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+            </Policies>
+            <DefaultRolloverStrategy max="14"/>
+        </RollingFile>
+        
+        <!-- Error Log File -->
+        <RollingFile name="errorLog" 
+            fileName="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}${APP_NAME}-error.log"
+            filePattern="${sys:mule.home}${sys:file.separator}logs${sys:file.separator}${APP_NAME}-error-%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="${LOG_PATTERN}"/>
+            <ThresholdFilter level="ERROR" onMatch="ACCEPT" onMismatch="DENY"/>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="25 MB"/>
+                <TimeBasedTriggeringPolicy interval="1" modulate="true"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30"/>
+        </RollingFile>
+        
+        <!-- Console Appender -->
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="${LOG_PATTERN_CONSOLE}"/>
+        </Console>
+    </Appenders>
+
+    <Loggers>
+        <!-- Suppress noisy HTTP loggers -->
+        <AsyncLogger name="org.mule.service.http" level="WARN"/>
+        <AsyncLogger name="org.mule.extension.http" level="WARN"/>
+        
+        <!-- Database Connector Logging -->
+        <AsyncLogger name="org.mule.extension.db" level="INFO"/>
+        
+        <!-- Object Store Logging -->
+        <AsyncLogger name="org.mule.extension.objectstore" level="INFO"/>
+        
+        <!-- Batch Processing Logging -->
+        <AsyncLogger name="org.mule.runtime.module.extension.internal.runtime.source.poll" level="INFO"/>
+        <AsyncLogger name="org.mule.runtime.core.internal.processor.strategy" level="WARN"/>
+        
+        <!-- Mule Core Logger -->
+        <AsyncLogger name="org.mule.runtime.core.internal.processor.LoggerMessageProcessor" level="INFO">
+            <AppenderRef ref="batchLog"/>
+        </AsyncLogger>
+        
+        <!-- Scheduler Logging -->
+        <AsyncLogger name="org.mule.runtime.core.internal.source.scheduler" level="INFO"/>
+        
+        <!-- Transaction Logging -->
+        <AsyncLogger name="org.mule.runtime.core.internal.transaction" level="INFO"/>
+        
+        <!-- Suppress verbose internal logs -->
+        <AsyncLogger name="org.mule.runtime.core.internal.policy" level="WARN"/>
+        <AsyncLogger name="org.mule.runtime.core.internal.interception" level="WARN"/>
+        <AsyncLogger name="org.mule.runtime.deployment.model" level="WARN"/>
+        
+        <!-- Root Logger -->
+        <AsyncRoot level="INFO">
+            <AppenderRef ref="file"/>
+            <AppenderRef ref="errorLog"/>
+            <AppenderRef ref="Console"/>
+        </AsyncRoot>
+    </Loggers>
+
+</Configuration>

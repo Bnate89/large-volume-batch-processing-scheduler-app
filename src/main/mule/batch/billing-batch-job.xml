@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:batch="http://www.mulesoft.org/schema/mule/batch"
+	xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
+		http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- ============================================== -->
+	<!-- BILLING BATCH JOB FLOW                        -->
+	<!-- End-of-day billing processing                 -->
+	<!-- ============================================== -->
+	
+	<flow name="billing-batch-job-flow" doc:name="Billing Batch Job Flow">
+		<logger level="INFO" doc:name="Log Batch Job Start"
+			message='#["[INFO] Starting billing batch job | JobId: " ++ vars.jobId]' />
+		
+		<!-- Retrieve watermark for incremental processing -->
+		<flow-ref name="retrieve-billing-watermark-subflow" doc:name="Retrieve Watermark" />
+		
+		<!-- Fetch billing records from source database -->
+		<flow-ref name="batch-input-billing-subflow" doc:name="Fetch Billing Records" />
+		
+		<logger level="INFO" doc:name="Log Records Fetched"
+			message='#["[INFO] Billing records fetched | JobId: " ++ vars.jobId ++ " | RecordCount: " ++ sizeOf(payload)]' />
+		
+		<!-- Execute batch job -->
+		<batch:job jobName="billing-batch-job" 
+			blockSize="${batch.billing.blockSize}" 
+			maxFailedRecords="${batch.billing.maxFailedRecords}">
+			
+			<batch:process-records>
+				
+				<!-- Step 1: Validate and Transform Records -->
+				<batch:step name="validate-transform-step" doc:name="Validate and Transform Step" acceptPolicy="NO_FAILURES">
+					<try doc:name="Try Validate Transform">
+						<flow-ref name="batch-processing-validate-subflow" doc:name="Validate Record" />
+						<flow-ref name="batch-processing-transform-subflow" doc:name="Transform Record" />
+						<error-handler ref="batch-error-handler" />
+					</try>
+				</batch:step>
+				
+				<!-- Step 2: Calculate Billing Amounts -->
+				<batch:step name="calculate-billing-step" doc:name="Calculate Billing Step" acceptPolicy="NO_FAILURES">
+					<try doc:name="Try Calculate Billing">
+						<flow-ref name="batch-processing-calculate-subflow" doc:name="Calculate Billing" />
+						<error-handler ref="batch-error-handler" />
+					</try>
+				</batch:step>
+				
+				<!-- Step 3: Write to Target Database (with aggregator for bulk insert) -->
+				<batch:step name="write-target-step" doc:name="Write to Target Step" acceptPolicy="NO_FAILURES">
+					<batch:aggregator size="${batch.billing.aggregatorSize}" doc:name="Batch Aggregator">
+						<try doc:name="Try Bulk Insert">
+							<flow-ref name="batch-output-billing-subflow" doc:name="Bulk Insert Records" />
+							<error-handler ref="batch-error-handler" />
+						</try>
+					</batch:aggregator>
+				</batch:step>
+				
+				<!-- Step 4: Handle Failed Records -->
+				<batch:step name="handle-failures-step" doc:name="Handle Failures Step" acceptPolicy="ONLY_FAILURES">
+					<logger level="WARN" doc:name="Log Failed Record"
+						message='#["[WARN] Processing failed record | JobId: " ++ vars.jobId ++ " | RecordId: " ++ (payload.id default \"unknown\")]' />
+					<flow-ref name="store-to-dlq-subflow" doc:name="Store Failed Record to DLQ" />
+				</batch:step>
+				
+			</batch:process-records>
+			
+			<batch:on-complete>
+				<!-- Log batch summary -->
+				<logger level="INFO" doc:name="Log Batch Summary"
+					message='#[output application/json
+---
+{
+	"message": "[INFO] Billing batch job completed",
+	"jobId": vars.jobId,
+	"totalRecords": payload.totalRecords,
+	"successfulRecords": payload.successfulRecords,
+	"failedRecords": payload.failedRecords,
+	"loadedRecords": payload.loadedRecords,
+	"elapsedTimeMs": payload.elapsedTimeInMillis
+}]' />
+				
+				<!-- Update watermark on successful completion -->
+				<choice doc:name="Check Success Rate">
+					<when expression="#[payload.failedRecords &lt; payload.totalRecords]">
+						<flow-ref name="update-billing-watermark-subflow" doc:name="Update Watermark" />
+					</when>
+					<otherwise>
+						<logger level="ERROR" doc:name="Log All Records Failed"
+							message='#["[ERROR] All billing records failed processing | JobId: " ++ vars.jobId]' />
+					</otherwise>
+				</choice>
+				
+				<!-- Store batch execution summary -->
+				<os:store doc:name="Store Batch Summary" 
+					key='#["billing-summary-" ++ vars.jobId]' 
+					objectStore="Batch_State_Object_Store">
+					<os:value>#[output application/json
+---
+{
+	jobId: vars.jobId,
+	jobType: "BILLING",
+	totalRecords: payload.totalRecords,
+	successfulRecords: payload.successfulRecords,
+	failedRecords: payload.failedRecords,
+	loadedRecords: payload.loadedRecords,
+	elapsedTimeMs: payload.elapsedTimeInMillis,
+	completedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+}]</os:value>
+				</os:store>
+			</batch:on-complete>
+			
+		</batch:job>
+		
+		<error-handler ref="global-error-handler" />
+	</flow>
+
+	<!-- ============================================== -->
+	<!-- BILLING WATERMARK SUBFLOWS                    -->
+	<!-- ============================================== -->
+	
+	<sub-flow name="retrieve-billing-watermark-subflow" doc:name="Retrieve Billing Watermark">
+		<os:retrieve doc:name="Retrieve Watermark" 
+			key="billing-watermark" 
+			objectStore="Watermark_Object_Store"
+			target="lastProcessedTimestamp">
+			<os:default-value>#[now() - |P1D|]</os:default-value>
+		</os:retrieve>
+		<logger level="DEBUG" doc:name="Log Watermark Retrieved"
+			message='#["[DEBUG] Billing watermark retrieved | LastProcessed: " ++ (vars.lastProcessedTimestamp as String)]' />
+	</sub-flow>
+	
+	<sub-flow name="update-billing-watermark-subflow" doc:name="Update Billing Watermark">
+		<os:store doc:name="Store Watermark" 
+			key="billing-watermark" 
+			objectStore="Watermark_Object_Store">
+			<os:value>#[vars.maxProcessedTimestamp default now()]</os:value>
+		</os:store>
+		<logger level="DEBUG" doc:name="Log Watermark Updated"
+			message='#["[DEBUG] Billing watermark updated | NewWatermark: " ++ (vars.maxProcessedTimestamp as String default now() as String)]' />
+	</sub-flow>
+
+</mule>

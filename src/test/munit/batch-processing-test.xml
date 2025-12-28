@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+	<munit:config name="batch-processing-test.xml" />
+
+	<!-- ============================================== -->
+	<!-- BATCH PROCESSING TESTS                        -->
+	<!-- ============================================== -->
+
+	<munit:test name="test-validate-billing-record-success" 
+		doc:name="Test Validate Billing Record Success"
+		description="Verify valid billing record passes validation">
+		
+		<munit:execution>
+			<set-payload value="#[{
+				'id': 1,
+				'customer_id': 'CUST001',
+				'account_number': 'ACC001',
+				'billing_period_start': now() - |P30D|,
+				'billing_period_end': now(),
+				'usage_amount': 150.50,
+				'rate_plan_id': 'PLAN001',
+				'status': 'PENDING'
+			}]" doc:name="Set Valid Record" />
+			<flow-ref name="batch-processing-validate-subflow" doc:name="Validate Record" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[payload.customer_id]" 
+				is="#[MunitTools::equalTo('CUST001')]" 
+				message="Valid record should pass through unchanged" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-validate-billing-record-missing-customer-id" 
+		doc:name="Test Validate Billing Record Missing Customer ID"
+		description="Verify validation fails when customer_id is missing"
+		expectedErrorType="APP:VALIDATION_ERROR">
+		
+		<munit:execution>
+			<set-payload value="#[{
+				'id': 1,
+				'customer_id': null,
+				'account_number': 'ACC001',
+				'billing_period_start': now() - |P30D|,
+				'billing_period_end': now(),
+				'usage_amount': 150.50
+			}]" doc:name="Set Invalid Record" />
+			<flow-ref name="batch-processing-validate-subflow" doc:name="Validate Record" />
+		</munit:execution>
+	</munit:test>
+
+	<munit:test name="test-validate-billing-record-negative-usage" 
+		doc:name="Test Validate Billing Record Negative Usage"
+		description="Verify validation fails when usage_amount is negative"
+		expectedErrorType="APP:VALIDATION_ERROR">
+		
+		<munit:execution>
+			<set-payload value="#[{
+				'id': 1,
+				'customer_id': 'CUST001',
+				'account_number': 'ACC001',
+				'billing_period_start': now() - |P30D|,
+				'billing_period_end': now(),
+				'usage_amount': -50.00
+			}]" doc:name="Set Invalid Record" />
+			<flow-ref name="batch-processing-validate-subflow" doc:name="Validate Record" />
+		</munit:execution>
+	</munit:test>
+
+	<munit:test name="test-transform-billing-record" 
+		doc:name="Test Transform Billing Record"
+		description="Verify billing record is transformed correctly">
+		
+		<munit:execution>
+			<set-payload value="#[{
+				'id': 1,
+				'customer_id': 'CUST001',
+				'account_number': 'ACC001',
+				'billing_period_start': now() - |P30D|,
+				'billing_period_end': now(),
+				'usage_amount': 150.50,
+				'rate_plan_id': 'PLAN001',
+				'status': 'PENDING',
+				'created_at': now() - |P30D|,
+				'updated_at': now()
+			}]" doc:name="Set Record" />
+			<flow-ref name="batch-processing-transform-subflow" doc:name="Transform Record" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[payload.customerId]" 
+				is="#[MunitTools::equalTo('CUST001')]" 
+				message="customerId should be mapped from customer_id" />
+			<munit-tools:assert-that 
+				expression="#[payload.accountNumber]" 
+				is="#[MunitTools::equalTo('ACC001')]" 
+				message="accountNumber should be mapped from account_number" />
+			<munit-tools:assert-that 
+				expression="#[payload.status]" 
+				is="#[MunitTools::equalTo('PROCESSING')]" 
+				message="status should be set to PROCESSING" />
+			<munit-tools:assert-that 
+				expression="#[payload.processedAt != null]" 
+				is="#[MunitTools::equalTo(true)]" 
+				message="processedAt should be set" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-calculate-billing-amounts" 
+		doc:name="Test Calculate Billing Amounts"
+		description="Verify billing amounts are calculated correctly">
+		
+		<munit:execution>
+			<set-payload value="#[{
+				'id': 1,
+				'customerId': 'CUST001',
+				'accountNumber': 'ACC001',
+				'usageAmount': 1000
+			}]" doc:name="Set Record" />
+			<flow-ref name="batch-processing-calculate-subflow" doc:name="Calculate Billing" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[payload.subtotal]" 
+				is="#[MunitTools::equalTo(100.0)]" 
+				message="Subtotal should be 100 (1000 * 0.10)" />
+			<munit-tools:assert-that 
+				expression="#[payload.taxAmount]" 
+				is="#[MunitTools::equalTo(8.0)]" 
+				message="Tax amount should be 8 (100 * 0.08)" />
+			<munit-tools:assert-that 
+				expression="#[payload.totalAmount]" 
+				is="#[MunitTools::equalTo(108.0)]" 
+				message="Total amount should be 108 (100 + 8)" />
+			<munit-tools:assert-that 
+				expression="#[payload.currency]" 
+				is="#[MunitTools::equalTo('USD')]" 
+				message="Currency should be USD" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-validate-customer-success" 
+		doc:name="Test Validate Customer Success"
+		description="Verify valid customer record passes validation">
+		
+		<munit:execution>
+			<set-payload value="#[{
+				'customer_id': 'CUST001',
+				'customer_name': 'Acme Corporation',
+				'customer_email': 'billing@acme.com',
+				'billing_address': '123 Main St',
+				'total_amount': 1500.00
+			}]" doc:name="Set Valid Customer" />
+			<flow-ref name="batch-processing-validate-customer-subflow" doc:name="Validate Customer" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[payload.customer_id]" 
+				is="#[MunitTools::equalTo('CUST001')]" 
+				message="Valid customer should pass through" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-validate-customer-missing-email" 
+		doc:name="Test Validate Customer Missing Email"
+		description="Verify validation fails when customer_email is missing"
+		expectedErrorType="APP:CUSTOMER_VALIDATION_ERROR">
+		
+		<munit:execution>
+			<set-payload value="#[{
+				'customer_id': 'CUST001',
+				'customer_name': 'Acme Corporation',
+				'customer_email': null,
+				'billing_address': '123 Main St',
+				'total_amount': 1500.00
+			}]" doc:name="Set Invalid Customer" />
+			<flow-ref name="batch-processing-validate-customer-subflow" doc:name="Validate Customer" />
+		</munit:execution>
+	</munit:test>
+
+	<munit:test name="test-generate-invoice" 
+		doc:name="Test Generate Invoice"
+		description="Verify invoice is generated correctly">
+		
+		<munit:execution>
+			<set-payload value="#[{
+				'customer_id': 'CUST001',
+				'customer_name': 'Acme Corporation',
+				'customer_email': 'billing@acme.com',
+				'billing_address': '123 Main St',
+				'tax_id': 'TAX123',
+				'billing_id': 'BILL001',
+				'billing_period_start': now() - |P30D|,
+				'billing_period_end': now(),
+				'total_amount': 1500.00,
+				'tax_amount': 120.00
+			}]" doc:name="Set Customer Record" />
+			<flow-ref name="batch-processing-generate-invoice-subflow" doc:name="Generate Invoice" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[payload.invoiceNumber startsWith 'INV-']" 
+				is="#[MunitTools::equalTo(true)]" 
+				message="Invoice number should start with INV-" />
+			<munit-tools:assert-that 
+				expression="#[payload.customerId]" 
+				is="#[MunitTools::equalTo('CUST001')]" 
+				message="Customer ID should be mapped" />
+			<munit-tools:assert-that 
+				expression="#[payload.status]" 
+				is="#[MunitTools::equalTo('GENERATED')]" 
+				message="Status should be GENERATED" />
+			<munit-tools:assert-that 
+				expression="#[payload.dueDate != null]" 
+				is="#[MunitTools::equalTo(true)]" 
+				message="Due date should be set" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-calculate-invoice-totals" 
+		doc:name="Test Calculate Invoice Totals"
+		description="Verify invoice totals are calculated correctly">
+		
+		<munit:execution>
+			<set-payload value="#[{
+				'invoiceNumber': 'INV-20240101-ABC123',
+				'customerId': 'CUST001',
+				'subtotal': 1500.00,
+				'taxAmount': 120.00
+			}]" doc:name="Set Invoice Record" />
+			<flow-ref name="batch-processing-calculate-totals-subflow" doc:name="Calculate Totals" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[payload.totalAmount]" 
+				is="#[MunitTools::equalTo(1620.0)]" 
+				message="Total amount should be 1620 (1500 + 120)" />
+			<munit-tools:assert-that 
+				expression="#[payload.currency]" 
+				is="#[MunitTools::equalTo('USD')]" 
+				message="Currency should be USD" />
+		</munit:validation>
+	</munit:test>
+
+</mule>

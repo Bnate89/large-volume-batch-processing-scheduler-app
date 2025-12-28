@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+
+	<!-- ============================================== -->
+	<!-- BATCH OUTPUT SUBFLOWS                         -->
+	<!-- Database write operations                     -->
+	<!-- ============================================== -->
+
+	<!-- Billing Records Bulk Insert -->
+	<sub-flow name="batch-output-billing-subflow" doc:name="Batch Output Billing Subflow">
+		<logger level="DEBUG" doc:name="Log Bulk Insert Billing"
+			message='#["[DEBUG] Bulk inserting billing records | Count: " ++ sizeOf(payload)]' />
+		
+		<until-successful maxRetries="${retry.maxAttempts}" millisBetweenRetries="${retry.intervalMs}" doc:name="Retry Bulk Insert">
+			<db:bulk-insert doc:name="Bulk Insert Billing Records" config-ref="Database_Target_Config">
+				<db:sql><![CDATA[
+					INSERT INTO processed_billing (
+						id,
+						customer_id,
+						account_number,
+						billing_period_start,
+						billing_period_end,
+						usage_amount,
+						rate_plan_id,
+						base_rate,
+						subtotal,
+						tax_rate,
+						tax_amount,
+						total_amount,
+						currency,
+						status,
+						processed_at,
+						created_at
+					) VALUES (
+						:id,
+						:customerId,
+						:accountNumber,
+						:billingPeriodStart,
+						:billingPeriodEnd,
+						:usageAmount,
+						:ratePlanId,
+						:baseRate,
+						:subtotal,
+						:taxRate,
+						:taxAmount,
+						:totalAmount,
+						:currency,
+						'PROCESSED',
+						:processedAt,
+						NOW()
+					)
+				]]></db:sql>
+				<db:bulk-input-parameters><![CDATA[#[payload map {
+					id: $.id,
+					customerId: $.customerId,
+					accountNumber: $.accountNumber,
+					billingPeriodStart: $.billingPeriodStart,
+					billingPeriodEnd: $.billingPeriodEnd,
+					usageAmount: $.usageAmount,
+					ratePlanId: $.ratePlanId,
+					baseRate: $.baseRate,
+					subtotal: $.subtotal,
+					taxRate: $.taxRate,
+					taxAmount: $.taxAmount,
+					totalAmount: $.totalAmount,
+					currency: $.currency,
+					processedAt: $.processedAt
+				}]]]></db:bulk-input-parameters>
+			</db:bulk-insert>
+		</until-successful>
+		
+		<logger level="DEBUG" doc:name="Log Bulk Insert Success"
+			message='#["[DEBUG] Billing records bulk inserted successfully | Count: " ++ sizeOf(payload)]' />
+	</sub-flow>
+
+	<!-- Invoice Records Bulk Insert -->
+	<sub-flow name="batch-output-invoice-subflow" doc:name="Batch Output Invoice Subflow">
+		<logger level="DEBUG" doc:name="Log Bulk Insert Invoices"
+			message='#["[DEBUG] Bulk inserting invoice records | Count: " ++ sizeOf(payload)]' />
+		
+		<until-successful maxRetries="${retry.maxAttempts}" millisBetweenRetries="${retry.intervalMs}" doc:name="Retry Invoice Bulk Insert">
+			<db:bulk-insert doc:name="Bulk Insert Invoice Records" config-ref="Database_Target_Config">
+				<db:sql><![CDATA[
+					INSERT INTO invoices (
+						invoice_number,
+						customer_id,
+						customer_name,
+						customer_email,
+						billing_address,
+						tax_id,
+						billing_id,
+						billing_period_start,
+						billing_period_end,
+						subtotal,
+						tax_amount,
+						total_amount,
+						currency,
+						invoice_date,
+						due_date,
+						status,
+						created_at
+					) VALUES (
+						:invoiceNumber,
+						:customerId,
+						:customerName,
+						:customerEmail,
+						:billingAddress,
+						:taxId,
+						:billingId,
+						:billingPeriodStart,
+						:billingPeriodEnd,
+						:subtotal,
+						:taxAmount,
+						:totalAmount,
+						:currency,
+						:invoiceDate,
+						:dueDate,
+						:status,
+						NOW()
+					)
+				]]></db:sql>
+				<db:bulk-input-parameters><![CDATA[#[payload map {
+					invoiceNumber: $.invoiceNumber,
+					customerId: $.customerId,
+					customerName: $.customerName,
+					customerEmail: $.customerEmail,
+					billingAddress: $.billingAddress,
+					taxId: $.taxId,
+					billingId: $.billingId,
+					billingPeriodStart: $.billingPeriodStart,
+					billingPeriodEnd: $.billingPeriodEnd,
+					subtotal: $.subtotal,
+					taxAmount: $.taxAmount,
+					totalAmount: $.totalAmount,
+					currency: $.currency,
+					invoiceDate: $.invoiceDate,
+					dueDate: $.dueDate,
+					status: $.status
+				}]]]></db:bulk-input-parameters>
+			</db:bulk-insert>
+		</until-successful>
+		
+		<logger level="DEBUG" doc:name="Log Invoice Bulk Insert Success"
+			message='#["[DEBUG] Invoice records bulk inserted successfully | Count: " ++ sizeOf(payload)]' />
+	</sub-flow>
+
+	<!-- Update Source Record Status -->
+	<sub-flow name="batch-output-update-status-subflow" doc:name="Update Source Status Subflow">
+		<logger level="DEBUG" doc:name="Log Updating Status"
+			message='#["[DEBUG] Updating source record status | RecordId: " ++ (payload.id as String default "unknown")]' />
+		
+		<db:update doc:name="Update Source Status" config-ref="Database_Source_Config">
+			<db:sql><![CDATA[
+				UPDATE billing_records
+				SET status = :newStatus,
+					processed_at = NOW()
+				WHERE id = :recordId
+			]]></db:sql>
+			<db:input-parameters>#[{
+				'recordId': payload.id,
+				'newStatus': 'PROCESSED'
+			}]</db:input-parameters>
+		</db:update>
+	</sub-flow>
+
+</mule>

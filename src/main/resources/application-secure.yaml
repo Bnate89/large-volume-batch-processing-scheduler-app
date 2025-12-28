@@ -1,0 +1,17 @@
+# Enterprise Batch Processing - Secure Configuration
+# All sensitive values are encrypted using AES/CBC
+# Encryption key must be provided via -Dencryption.key VM argument
+
+# Database Credentials
+db:
+  source:
+    user: "![encrypted_source_user]"
+    password: "![encrypted_source_password]"
+  target:
+    user: "![encrypted_target_user]"
+    password: "![encrypted_target_password]"
+
+# ERP/Billing System Credentials
+erp:
+  apiKey: "![encrypted_erp_api_key]"
+  clientSecret: "![encrypted_erp_client_secret]"

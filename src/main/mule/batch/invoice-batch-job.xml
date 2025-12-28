@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:batch="http://www.mulesoft.org/schema/mule/batch"
+	xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
+		http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- ============================================== -->
+	<!-- INVOICE BATCH JOB FLOW                        -->
+	<!-- Monthly invoice generation processing         -->
+	<!-- ============================================== -->
+	
+	<flow name="invoice-batch-job-flow" doc:name="Invoice Batch Job Flow">
+		<logger level="INFO" doc:name="Log Batch Job Start"
+			message='#["[INFO] Starting invoice batch job | JobId: " ++ vars.jobId]' />
+		
+		<!-- Retrieve watermark for incremental processing -->
+		<flow-ref name="retrieve-invoice-watermark-subflow" doc:name="Retrieve Watermark" />
+		
+		<!-- Fetch invoice records from source database -->
+		<flow-ref name="batch-input-invoice-subflow" doc:name="Fetch Invoice Records" />
+		
+		<logger level="INFO" doc:name="Log Records Fetched"
+			message='#["[INFO] Invoice records fetched | JobId: " ++ vars.jobId ++ " | RecordCount: " ++ sizeOf(payload)]' />
+		
+		<!-- Execute batch job -->
+		<batch:job jobName="invoice-batch-job" 
+			blockSize="${batch.invoice.blockSize}" 
+			maxFailedRecords="${batch.invoice.maxFailedRecords}">
+			
+			<batch:process-records>
+				
+				<!-- Step 1: Validate Customer Data -->
+				<batch:step name="validate-customer-step" doc:name="Validate Customer Step" acceptPolicy="NO_FAILURES">
+					<try doc:name="Try Validate Customer">
+						<flow-ref name="batch-processing-validate-customer-subflow" doc:name="Validate Customer" />
+						<error-handler ref="batch-error-handler" />
+					</try>
+				</batch:step>
+				
+				<!-- Step 2: Generate Invoice -->
+				<batch:step name="generate-invoice-step" doc:name="Generate Invoice Step" acceptPolicy="NO_FAILURES">
+					<try doc:name="Try Generate Invoice">
+						<flow-ref name="batch-processing-generate-invoice-subflow" doc:name="Generate Invoice" />
+						<error-handler ref="batch-error-handler" />
+					</try>
+				</batch:step>
+				
+				<!-- Step 3: Calculate Totals and Taxes -->
+				<batch:step name="calculate-totals-step" doc:name="Calculate Totals Step" acceptPolicy="NO_FAILURES">
+					<try doc:name="Try Calculate Totals">
+						<flow-ref name="batch-processing-calculate-totals-subflow" doc:name="Calculate Totals" />
+						<error-handler ref="batch-error-handler" />
+					</try>
+				</batch:step>
+				
+				<!-- Step 4: Write Invoice to Target Database (with aggregator) -->
+				<batch:step name="write-invoice-step" doc:name="Write Invoice Step" acceptPolicy="NO_FAILURES">
+					<batch:aggregator size="${batch.invoice.aggregatorSize}" doc:name="Invoice Aggregator">
+						<try doc:name="Try Bulk Insert Invoices">
+							<flow-ref name="batch-output-invoice-subflow" doc:name="Bulk Insert Invoices" />
+							<error-handler ref="batch-error-handler" />
+						</try>
+					</batch:aggregator>
+				</batch:step>
+				
+				<!-- Step 5: Handle Failed Records -->
+				<batch:step name="handle-invoice-failures-step" doc:name="Handle Invoice Failures Step" acceptPolicy="ONLY_FAILURES">
+					<logger level="WARN" doc:name="Log Failed Invoice Record"
+						message='#["[WARN] Invoice processing failed | JobId: " ++ vars.jobId ++ " | CustomerId: " ++ (payload.customerId default \"unknown\")]' />
+					<flow-ref name="store-to-dlq-subflow" doc:name="Store Failed Invoice to DLQ" />
+				</batch:step>
+				
+			</batch:process-records>
+			
+			<batch:on-complete>
+				<!-- Log batch summary -->
+				<logger level="INFO" doc:name="Log Invoice Batch Summary"
+					message='#[output application/json
+---
+{
+	"message": "[INFO] Invoice batch job completed",
+	"jobId": vars.jobId,
+	"totalRecords": payload.totalRecords,
+	"successfulRecords": payload.successfulRecords,
+	"failedRecords": payload.failedRecords,
+	"loadedRecords": payload.loadedRecords,
+	"elapsedTimeMs": payload.elapsedTimeInMillis
+}]' />
+				
+				<!-- Update watermark on successful completion -->
+				<choice doc:name="Check Invoice Success Rate">
+					<when expression="#[payload.failedRecords &lt; payload.totalRecords]">
+						<flow-ref name="update-invoice-watermark-subflow" doc:name="Update Invoice Watermark" />
+					</when>
+					<otherwise>
+						<logger level="ERROR" doc:name="Log All Invoices Failed"
+							message='#["[ERROR] All invoice records failed processing | JobId: " ++ vars.jobId]' />
+					</otherwise>
+				</choice>
+				
+				<!-- Store batch execution summary -->
+				<os:store doc:name="Store Invoice Batch Summary" 
+					key='#["invoice-summary-" ++ vars.jobId]' 
+					objectStore="Batch_State_Object_Store">
+					<os:value>#[output application/json
+---
+{
+	jobId: vars.jobId,
+	jobType: "INVOICE",
+	totalRecords: payload.totalRecords,
+	successfulRecords: payload.successfulRecords,
+	failedRecords: payload.failedRecords,
+	loadedRecords: payload.loadedRecords,
+	elapsedTimeMs: payload.elapsedTimeInMillis,
+	completedAt: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+}]</os:value>
+				</os:store>
+			</batch:on-complete>
+			
+		</batch:job>
+		
+		<error-handler ref="global-error-handler" />
+	</flow>
+
+	<!-- ============================================== -->
+	<!-- INVOICE WATERMARK SUBFLOWS                    -->
+	<!-- ============================================== -->
+	
+	<sub-flow name="retrieve-invoice-watermark-subflow" doc:name="Retrieve Invoice Watermark">
+		<os:retrieve doc:name="Retrieve Invoice Watermark" 
+			key="invoice-watermark" 
+			objectStore="Watermark_Object_Store"
+			target="lastInvoiceProcessedTimestamp">
+			<os:default-value>#[now() - |P30D|]</os:default-value>
+		</os:retrieve>
+		<logger level="DEBUG" doc:name="Log Invoice Watermark Retrieved"
+			message='#["[DEBUG] Invoice watermark retrieved | LastProcessed: " ++ (vars.lastInvoiceProcessedTimestamp as String)]' />
+	</sub-flow>
+	
+	<sub-flow name="update-invoice-watermark-subflow" doc:name="Update Invoice Watermark">
+		<os:store doc:name="Store Invoice Watermark" 
+			key="invoice-watermark" 
+			objectStore="Watermark_Object_Store">
+			<os:value>#[vars.maxInvoiceProcessedTimestamp default now()]</os:value>
+		</os:store>
+		<logger level="DEBUG" doc:name="Log Invoice Watermark Updated"
+			message='#["[DEBUG] Invoice watermark updated | NewWatermark: " ++ (vars.maxInvoiceProcessedTimestamp as String default now() as String)]' />
+	</sub-flow>
+
+</mule>

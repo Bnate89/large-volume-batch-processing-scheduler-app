@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+		http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+
+	<munit:config name="batch-output-test.xml" />
+
+	<!-- ============================================== -->
+	<!-- BATCH OUTPUT TESTS                            -->
+	<!-- ============================================== -->
+
+	<munit:test name="test-batch-output-billing-bulk-insert" 
+		doc:name="Test Batch Output Billing Bulk Insert"
+		description="Verify billing records are bulk inserted correctly">
+		
+		<munit:behavior>
+			<!-- Mock database bulk insert -->
+			<munit-tools:mock-when processor="db:bulk-insert">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Bulk Insert Billing Records" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value="#[[1, 1]]" mediaType="application/java" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value="#[[
+				{
+					'id': 1,
+					'customerId': 'CUST001',
+					'accountNumber': 'ACC001',
+					'billingPeriodStart': now() - |P30D|,
+					'billingPeriodEnd': now(),
+					'usageAmount': 150.50,
+					'ratePlanId': 'PLAN001',
+					'baseRate': 0.10,
+					'subtotal': 15.05,
+					'taxRate': 0.08,
+					'taxAmount': 1.20,
+					'totalAmount': 16.25,
+					'currency': 'USD',
+					'processedAt': now()
+				},
+				{
+					'id': 2,
+					'customerId': 'CUST002',
+					'accountNumber': 'ACC002',
+					'billingPeriodStart': now() - |P30D|,
+					'billingPeriodEnd': now(),
+					'usageAmount': 275.00,
+					'ratePlanId': 'PLAN002',
+					'baseRate': 0.10,
+					'subtotal': 27.50,
+					'taxRate': 0.08,
+					'taxAmount': 2.20,
+					'totalAmount': 29.70,
+					'currency': 'USD',
+					'processedAt': now()
+				}
+			]]" doc:name="Set Billing Records" />
+			<flow-ref name="batch-output-billing-subflow" doc:name="Bulk Insert Billing" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:verify-call processor="db:bulk-insert" times="1" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-batch-output-invoice-bulk-insert" 
+		doc:name="Test Batch Output Invoice Bulk Insert"
+		description="Verify invoice records are bulk inserted correctly">
+		
+		<munit:behavior>
+			<!-- Mock database bulk insert for invoices -->
+			<munit-tools:mock-when processor="db:bulk-insert">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Bulk Insert Invoice Records" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value="#[[1]]" mediaType="application/java" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value="#[[
+				{
+					'invoiceNumber': 'INV-20240101-ABC123',
+					'customerId': 'CUST001',
+					'customerName': 'Acme Corporation',
+					'customerEmail': 'billing@acme.com',
+					'billingAddress': '123 Main St',
+					'taxId': 'TAX123',
+					'billingId': 'BILL001',
+					'billingPeriodStart': now() - |P30D|,
+					'billingPeriodEnd': now(),
+					'subtotal': 1500.00,
+					'taxAmount': 120.00,
+					'totalAmount': 1620.00,
+					'currency': 'USD',
+					'invoiceDate': now(),
+					'dueDate': now() + |P30D|,
+					'status': 'GENERATED'
+				}
+			]]" doc:name="Set Invoice Records" />
+			<flow-ref name="batch-output-invoice-subflow" doc:name="Bulk Insert Invoices" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:verify-call processor="db:bulk-insert" times="1" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-batch-output-update-status" 
+		doc:name="Test Batch Output Update Status"
+		description="Verify source record status is updated correctly">
+		
+		<munit:behavior>
+			<!-- Mock database update -->
+			<munit-tools:mock-when processor="db:update">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Update Source Status" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value="#[1]" mediaType="application/java" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value="#[{
+				'id': 1,
+				'customerId': 'CUST001',
+				'status': 'PROCESSED'
+			}]" doc:name="Set Record" />
+			<flow-ref name="batch-output-update-status-subflow" doc:name="Update Status" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:verify-call processor="db:update" times="1" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-batch-output-empty-payload" 
+		doc:name="Test Batch Output Empty Payload"
+		description="Verify handling of empty payload for bulk insert">
+		
+		<munit:behavior>
+			<!-- Mock database bulk insert -->
+			<munit-tools:mock-when processor="db:bulk-insert">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Bulk Insert Billing Records" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value="#[[]]" mediaType="application/java" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value="#[[]]" doc:name="Set Empty Payload" />
+			<flow-ref name="batch-output-billing-subflow" doc:name="Bulk Insert Empty" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:verify-call processor="db:bulk-insert" times="1" />
+		</munit:validation>
+	</munit:test>
+
+</mule>

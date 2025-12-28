@@ -1,0 +1,5 @@
+{
+  "minMuleVersion": "4.9.3",
+  "javaSpecificationVersions": ["17"],
+  "secureProperties": ["db.source.password", "db.target.password", "erp.apiKey", "erp.clientSecret"]
+}

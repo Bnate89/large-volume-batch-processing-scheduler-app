@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<munit:config name="scheduler-batch-flow-test.xml" />
+
+	<!-- ============================================== -->
+	<!-- SCHEDULER FLOW TESTS                          -->
+	<!-- ============================================== -->
+
+	<munit:test name="test-acquire-execution-lock-success" 
+		doc:name="Test Acquire Execution Lock Success"
+		description="Verify that execution lock can be acquired when no lock exists">
+		
+		<munit:behavior>
+			<!-- Mock os:contains to return false (no lock exists) -->
+			<munit-tools:mock-when processor="os:contains">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Check Lock Exists" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value="#[false]" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+			
+			<!-- Mock os:store for lock acquisition -->
+			<munit-tools:mock-when processor="os:store">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Store Lock" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return />
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-variable variableName="jobId" value="#[uuid()]" doc:name="Set Job ID" />
+			<set-variable variableName="jobType" value="BILLING" doc:name="Set Job Type" />
+			<flow-ref name="acquire-execution-lock-subflow" doc:name="Acquire Lock" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[vars.lockAcquired]" 
+				is="#[MunitTools::equalTo(true)]" 
+				message="Lock should be acquired when no existing lock" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-acquire-execution-lock-already-locked" 
+		doc:name="Test Acquire Execution Lock Already Locked"
+		description="Verify that lock acquisition fails when lock already exists">
+		
+		<munit:behavior>
+			<!-- Mock os:contains to return true (lock exists) -->
+			<munit-tools:mock-when processor="os:contains">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Check Lock Exists" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value="#[true]" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-variable variableName="jobId" value="#[uuid()]" doc:name="Set Job ID" />
+			<set-variable variableName="jobType" value="BILLING" doc:name="Set Job Type" />
+			<flow-ref name="acquire-execution-lock-subflow" doc:name="Acquire Lock" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[vars.lockAcquired]" 
+				is="#[MunitTools::equalTo(false)]" 
+				message="Lock should not be acquired when already locked" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-release-execution-lock" 
+		doc:name="Test Release Execution Lock"
+		description="Verify that execution lock can be released">
+		
+		<munit:behavior>
+			<!-- Mock os:remove for lock release -->
+			<munit-tools:mock-when processor="os:remove">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Remove Lock" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return />
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-variable variableName="jobId" value="#[uuid()]" doc:name="Set Job ID" />
+			<set-variable variableName="lockKey" value="batch-lock-BILLING" doc:name="Set Lock Key" />
+			<flow-ref name="release-execution-lock-subflow" doc:name="Release Lock" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:verify-call processor="os:remove" times="1" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-store-batch-state" 
+		doc:name="Test Store Batch State"
+		description="Verify that batch state is stored correctly">
+		
+		<munit:behavior>
+			<!-- Mock os:store for batch state -->
+			<munit-tools:mock-when processor="os:store">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Store Batch State" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return />
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-variable variableName="jobId" value="#[uuid()]" doc:name="Set Job ID" />
+			<set-variable variableName="jobType" value="BILLING" doc:name="Set Job Type" />
+			<set-variable variableName="jobStartTime" value="#[now()]" doc:name="Set Start Time" />
+			<flow-ref name="store-batch-state-subflow" doc:name="Store Batch State" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:verify-call processor="os:store" times="1" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-update-batch-state" 
+		doc:name="Test Update Batch State"
+		description="Verify that batch state is updated correctly">
+		
+		<munit:behavior>
+			<!-- Mock os:store for batch state update -->
+			<munit-tools:mock-when processor="os:store">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Update Batch State" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return />
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-variable variableName="jobId" value="#[uuid()]" doc:name="Set Job ID" />
+			<set-variable variableName="jobType" value="BILLING" doc:name="Set Job Type" />
+			<set-variable variableName="jobStartTime" value="#[now()]" doc:name="Set Start Time" />
+			<set-variable variableName="jobStatus" value="COMPLETED" doc:name="Set Status" />
+			<flow-ref name="update-batch-state-subflow" doc:name="Update Batch State" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:verify-call processor="os:store" times="1" />
+		</munit:validation>
+	</munit:test>
+
+</mule>

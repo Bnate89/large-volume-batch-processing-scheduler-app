@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<!-- ============================================== -->
+	<!-- GLOBAL ERROR HANDLER                          -->
+	<!-- Centralized error handling for all flows      -->
+	<!-- ============================================== -->
+	
+	<error-handler name="global-error-handler" doc:name="Global Error Handler">
+		
+		<!-- Database Connectivity Errors - Propagate for retry at higher level -->
+		<on-error-propagate type="DB:CONNECTIVITY" logException="true" doc:name="DB Connectivity Error">
+			<logger level="ERROR" doc:name="Log DB Connectivity Error"
+				message='#["[ERROR] Database connectivity failure | CorrelationId: " ++ correlationId ++ " | Error: " ++ error.description]' />
+			<set-variable variableName="errorCategory" value="DB_CONNECTIVITY" doc:name="Set Error Category" />
+			<set-variable variableName="errorTimestamp" value="#[now()]" doc:name="Set Error Timestamp" />
+		</on-error-propagate>
+		
+		<!-- Database Query Errors - Continue with error logging -->
+		<on-error-continue type="DB:QUERY_EXECUTION" logException="true" doc:name="DB Query Error">
+			<logger level="ERROR" doc:name="Log DB Query Error"
+				message='#["[ERROR] Database query execution failed | CorrelationId: " ++ correlationId ++ " | Error: " ++ error.description]' />
+			<set-variable variableName="errorCategory" value="DB_QUERY" doc:name="Set Error Category" />
+			<flow-ref name="store-to-dlq-subflow" doc:name="Store to DLQ" />
+		</on-error-continue>
+		
+		<!-- Batch Loading Errors - Critical failure, propagate -->
+		<on-error-propagate type="MULE:COMPOSITE_ROUTING" logException="true" doc:name="Batch Loading Error">
+			<logger level="ERROR" doc:name="Log Batch Loading Error"
+				message='#["[ERROR] Batch loading phase failed | CorrelationId: " ++ correlationId ++ " | Error: " ++ error.description]' />
+			<set-variable variableName="errorCategory" value="BATCH_LOADING" doc:name="Set Error Category" />
+		</on-error-propagate>
+		
+		<!-- Expression/Transformation Errors - Continue with logging -->
+		<on-error-continue type="MULE:EXPRESSION" logException="true" doc:name="Expression Error">
+			<logger level="ERROR" doc:name="Log Expression Error"
+				message='#["[ERROR] DataWeave expression error | CorrelationId: " ++ correlationId ++ " | Error: " ++ error.description]' />
+			<set-variable variableName="errorCategory" value="EXPRESSION" doc:name="Set Error Category" />
+			<flow-ref name="store-to-dlq-subflow" doc:name="Store to DLQ" />
+		</on-error-continue>
+		
+		<!-- Timeout Errors - Propagate for potential retry -->
+		<on-error-propagate type="MULE:TIMEOUT" logException="true" doc:name="Timeout Error">
+			<logger level="ERROR" doc:name="Log Timeout Error"
+				message='#["[ERROR] Operation timeout | CorrelationId: " ++ correlationId ++ " | Error: " ++ error.description]' />
+			<set-variable variableName="errorCategory" value="TIMEOUT" doc:name="Set Error Category" />
+		</on-error-propagate>
+		
+		<!-- Retry Exhausted Errors - Store to DLQ and continue -->
+		<on-error-continue type="MULE:RETRY_EXHAUSTED" logException="true" doc:name="Retry Exhausted Error">
+			<logger level="ERROR" doc:name="Log Retry Exhausted"
+				message='#["[ERROR] Retry attempts exhausted | CorrelationId: " ++ correlationId ++ " | Error: " ++ error.description]' />
+			<set-variable variableName="errorCategory" value="RETRY_EXHAUSTED" doc:name="Set Error Category" />
+			<flow-ref name="store-to-dlq-subflow" doc:name="Store to DLQ" />
+		</on-error-continue>
+		
+		<!-- Object Store Errors - Log and continue -->
+		<on-error-continue type="OS:KEY_NOT_FOUND" logException="false" doc:name="OS Key Not Found">
+			<logger level="WARN" doc:name="Log OS Key Not Found"
+				message='#["[WARN] Object Store key not found | CorrelationId: " ++ correlationId ++ " | Key: " ++ (error.errorMessage.payload default "unknown")]' />
+		</on-error-continue>
+		
+		<!-- Catch-all for any unhandled errors -->
+		<on-error-propagate type="ANY" logException="true" doc:name="Catch All Error">
+			<logger level="ERROR" doc:name="Log Unhandled Error"
+				message='#["[ERROR] Unhandled error | CorrelationId: " ++ correlationId ++ " | ErrorType: " ++ error.errorType.identifier ++ " | Error: " ++ error.description]' />
+			<set-variable variableName="errorCategory" value="UNHANDLED" doc:name="Set Error Category" />
+		</on-error-propagate>
+		
+	</error-handler>
+
+	<!-- ============================================== -->
+	<!-- DEAD LETTER QUEUE SUBFLOW                     -->
+	<!-- Stores failed records for later reprocessing  -->
+	<!-- ============================================== -->
+	
+	<sub-flow name="store-to-dlq-subflow" doc:name="Store to DLQ Subflow">
+		<logger level="INFO" doc:name="Log DLQ Entry"
+			message='#["[INFO] Storing record to DLQ | CorrelationId: " ++ correlationId]' />
+		<os:store doc:name="Store to DLQ" 
+			key="#[correlationId ++ '-' ++ (now() as String {format: 'yyyyMMddHHmmssSSS'})]" 
+			objectStore="DLQ_Object_Store">
+			<os:value>#[output application/json
+---
+{
+	correlationId: correlationId,
+	errorCategory: vars.errorCategory default "UNKNOWN",
+	errorDescription: error.description default "No description",
+	errorType: error.errorType.identifier default "UNKNOWN",
+	originalPayload: write(payload, "application/json") default "{}",
+	timestamp: now() as String {format: "yyyy-MM-dd'T'HH:mm:ss.SSSZ"}
+}]</os:value>
+		</os:store>
+		<logger level="INFO" doc:name="Log DLQ Success"
+			message='#["[INFO] Record stored to DLQ successfully | CorrelationId: " ++ correlationId]' />
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- BATCH ERROR HANDLER                           -->
+	<!-- Specific error handling for batch operations  -->
+	<!-- ============================================== -->
+	
+	<error-handler name="batch-error-handler" doc:name="Batch Error Handler">
+		
+		<!-- Record-level processing errors - Continue to allow partial success -->
+		<on-error-continue type="ANY" logException="true" doc:name="Batch Record Error">
+			<logger level="WARN" doc:name="Log Batch Record Error"
+				message='#["[WARN] Batch record processing error | CorrelationId: " ++ correlationId ++ " | RecordId: " ++ (payload.id default "unknown") ++ " | Error: " ++ error.description]' />
+			<set-variable variableName="recordError" value="#[{
+				recordId: payload.id default 'unknown',
+				errorType: error.errorType.identifier,
+				errorDescription: error.description,
+				timestamp: now()
+			}]" doc:name="Set Record Error" />
+		</on-error-continue>
+		
+	</error-handler>
+
+</mule>

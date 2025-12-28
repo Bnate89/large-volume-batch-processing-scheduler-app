@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xmlns:secure-properties="http://www.mulesoft.org/schema/mule/secure-properties"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+		http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/schema/mule/secure-properties/current/mule-secure-properties.xsd">
+
+	<!-- ============================================== -->
+	<!-- GLOBAL PROPERTIES CONFIGURATION               -->
+	<!-- ============================================== -->
+	
+	<!-- Environment Property - Must be set via -Dmule.env=dev|qa|prod -->
+	<global-property name="mule.env" value="dev" doc:name="Environment Property" />
+	
+	<!-- Encryption Key - Must be set via -Dencryption.key -->
+	<global-property name="encryption.key" value="defaultEncryptionKey123" doc:name="Encryption Key" />
+	
+	<!-- Secure Properties Configuration -->
+	<secure-properties:config name="Secure_Properties_Config" 
+		doc:name="Secure Properties Config"
+		file="application-secure.yaml" 
+		key="${encryption.key}">
+		<secure-properties:encrypt algorithm="AES" mode="CBC" />
+	</secure-properties:config>
+	
+	<!-- Application Properties Configuration -->
+	<configuration-properties doc:name="Application Properties" file="application.yaml" />
+
+	<!-- ============================================== -->
+	<!-- GLOBAL ERROR HANDLER REFERENCE                -->
+	<!-- ============================================== -->
+	<configuration defaultErrorHandler-ref="global-error-handler" doc:name="Global Configuration" />
+
+	<!-- ============================================== -->
+	<!-- DATABASE CONFIGURATIONS                       -->
+	<!-- ============================================== -->
+	
+	<!-- Source Database Configuration -->
+	<db:config name="Database_Source_Config" doc:name="Database Source Config">
+		<db:my-sql-connection 
+			host="${db.source.host}" 
+			port="${db.source.port}" 
+			user="${secure::db.source.user}" 
+			password="${secure::db.source.password}" 
+			database="${db.source.database}">
+			<reconnection failsDeployment="true">
+				<reconnect frequency="${retry.reconnectFrequency}" count="${retry.reconnectAttempts}" />
+			</reconnection>
+			<db:pooling-profile 
+				minPoolSize="${db.source.minPoolSize}" 
+				maxPoolSize="${db.source.maxPoolSize}" 
+				maxWait="${db.source.maxWait}" 
+				maxWaitUnit="SECONDS" />
+		</db:my-sql-connection>
+	</db:config>
+	
+	<!-- Target Database Configuration -->
+	<db:config name="Database_Target_Config" doc:name="Database Target Config">
+		<db:my-sql-connection 
+			host="${db.target.host}" 
+			port="${db.target.port}" 
+			user="${secure::db.target.user}" 
+			password="${secure::db.target.password}" 
+			database="${db.target.database}">
+			<reconnection failsDeployment="true">
+				<reconnect frequency="${retry.reconnectFrequency}" count="${retry.reconnectAttempts}" />
+			</reconnection>
+			<db:pooling-profile 
+				minPoolSize="${db.target.minPoolSize}" 
+				maxPoolSize="${db.target.maxPoolSize}" 
+				maxWait="${db.target.maxWait}" 
+				maxWaitUnit="SECONDS" />
+		</db:my-sql-connection>
+	</db:config>
+
+	<!-- ============================================== -->
+	<!-- OBJECT STORE CONFIGURATIONS                   -->
+	<!-- ============================================== -->
+	
+	<!-- Watermark Object Store - Persistent storage for batch watermarks -->
+	<os:object-store name="Watermark_Object_Store" 
+		doc:name="Watermark Object Store"
+		persistent="true" 
+		maxEntries="${objectstore.watermark.maxEntries}" 
+		entryTtl="${objectstore.watermark.entryTtl}" 
+		entryTtlUnit="DAYS" />
+	
+	<!-- Dead Letter Queue Object Store - For failed records -->
+	<os:object-store name="DLQ_Object_Store" 
+		doc:name="DLQ Object Store"
+		persistent="true" 
+		maxEntries="${objectstore.dlq.maxEntries}" 
+		entryTtl="${objectstore.dlq.entryTtl}" 
+		entryTtlUnit="DAYS" />
+	
+	<!-- Distributed Lock Object Store - For scheduler execution lock -->
+	<os:object-store name="Lock_Object_Store" 
+		doc:name="Lock Object Store"
+		persistent="true" 
+		maxEntries="${objectstore.lock.maxEntries}" 
+		entryTtl="${objectstore.lock.entryTtl}" 
+		entryTtlUnit="HOURS" />
+	
+	<!-- Batch State Object Store - For batch execution state -->
+	<os:object-store name="Batch_State_Object_Store" 
+		doc:name="Batch State Object Store"
+		persistent="true" 
+		maxEntries="100" 
+		entryTtl="1" 
+		entryTtlUnit="DAYS" />
+
+</mule>

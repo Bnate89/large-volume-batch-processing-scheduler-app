@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+	xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+		http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+		http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+	<munit:config name="batch-error-handling-test.xml" />
+
+	<!-- ============================================== -->
+	<!-- ERROR HANDLING TESTS                          -->
+	<!-- ============================================== -->
+
+	<munit:test name="test-store-to-dlq-success" 
+		doc:name="Test Store to DLQ Success"
+		description="Verify failed records are stored to DLQ correctly">
+		
+		<munit:behavior>
+			<!-- Mock os:store for DLQ -->
+			<munit-tools:mock-when processor="os:store">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Store to DLQ" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return />
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-payload value="#[{
+				'id': 1,
+				'customerId': 'CUST001',
+				'status': 'FAILED'
+			}]" doc:name="Set Failed Record" />
+			<set-variable variableName="errorCategory" value="DB_QUERY" doc:name="Set Error Category" />
+			<flow-ref name="store-to-dlq-subflow" doc:name="Store to DLQ" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:verify-call processor="os:store" times="1" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-watermark-retrieve-with-default" 
+		doc:name="Test Watermark Retrieve With Default"
+		description="Verify watermark retrieval returns default when key not found">
+		
+		<munit:behavior>
+			<!-- Mock os:retrieve to return default value -->
+			<munit-tools:mock-when processor="os:retrieve">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Retrieve Watermark" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value="#[now() - |P1D|]" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-variable variableName="watermarkKey" value="test-watermark" doc:name="Set Watermark Key" />
+			<set-variable variableName="defaultWatermark" value="#[now() - |P1D|]" doc:name="Set Default" />
+			<flow-ref name="retrieve-watermark-subflow" doc:name="Retrieve Watermark" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[vars.watermarkValue != null]" 
+				is="#[MunitTools::equalTo(true)]" 
+				message="Watermark value should be set" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-watermark-store" 
+		doc:name="Test Watermark Store"
+		description="Verify watermark is stored correctly">
+		
+		<munit:behavior>
+			<!-- Mock os:store for watermark -->
+			<munit-tools:mock-when processor="os:store">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Store Watermark" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return />
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-variable variableName="watermarkKey" value="test-watermark" doc:name="Set Watermark Key" />
+			<set-variable variableName="newWatermarkValue" value="#[now()]" doc:name="Set New Value" />
+			<flow-ref name="store-watermark-subflow" doc:name="Store Watermark" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:verify-call processor="os:store" times="1" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-watermark-reset" 
+		doc:name="Test Watermark Reset"
+		description="Verify watermark can be reset">
+		
+		<munit:behavior>
+			<!-- Mock os:remove for watermark reset -->
+			<munit-tools:mock-when processor="os:remove">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Remove Watermark" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return />
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-variable variableName="watermarkKey" value="test-watermark" doc:name="Set Watermark Key" />
+			<flow-ref name="reset-watermark-subflow" doc:name="Reset Watermark" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:verify-call processor="os:remove" times="1" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-get-all-watermarks" 
+		doc:name="Test Get All Watermarks"
+		description="Verify all watermarks can be retrieved for monitoring">
+		
+		<munit:behavior>
+			<!-- Mock os:retrieve for billing watermark -->
+			<munit-tools:mock-when processor="os:retrieve">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Get Billing Watermark" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value="#[now() - |P1D|]" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+			
+			<!-- Mock os:retrieve for invoice watermark -->
+			<munit-tools:mock-when processor="os:retrieve">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Get Invoice Watermark" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value="#[now() - |P30D|]" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<flow-ref name="get-all-watermarks-subflow" doc:name="Get All Watermarks" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[payload.retrievedAt != null]" 
+				is="#[MunitTools::equalTo(true)]" 
+				message="Retrieved timestamp should be set" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-validate-watermark-valid" 
+		doc:name="Test Validate Watermark Valid"
+		description="Verify valid watermark passes validation">
+		
+		<munit:behavior>
+			<!-- Mock os:retrieve for watermark validation -->
+			<munit-tools:mock-when processor="os:retrieve">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Retrieve Current Watermark" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value="#[now() - |P1D|]" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-variable variableName="watermarkKey" value="test-watermark" doc:name="Set Watermark Key" />
+			<flow-ref name="validate-watermark-subflow" doc:name="Validate Watermark" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[vars.watermarkValid]" 
+				is="#[MunitTools::equalTo(true)]" 
+				message="Watermark should be valid" />
+		</munit:validation>
+	</munit:test>
+
+	<munit:test name="test-validate-watermark-null" 
+		doc:name="Test Validate Watermark Null"
+		description="Verify null watermark fails validation">
+		
+		<munit:behavior>
+			<!-- Mock os:retrieve returning null -->
+			<munit-tools:mock-when processor="os:retrieve">
+				<munit-tools:with-attributes>
+					<munit-tools:with-attribute attributeName="doc:name" whereValue="Retrieve Current Watermark" />
+				</munit-tools:with-attributes>
+				<munit-tools:then-return>
+					<munit-tools:payload value="#[null]" />
+				</munit-tools:then-return>
+			</munit-tools:mock-when>
+		</munit:behavior>
+		
+		<munit:execution>
+			<set-variable variableName="watermarkKey" value="test-watermark" doc:name="Set Watermark Key" />
+			<flow-ref name="validate-watermark-subflow" doc:name="Validate Watermark" />
+		</munit:execution>
+		
+		<munit:validation>
+			<munit-tools:assert-that 
+				expression="#[vars.watermarkValid]" 
+				is="#[MunitTools::equalTo(false)]" 
+				message="Null watermark should be invalid" />
+			<munit-tools:assert-that 
+				expression="#[vars.watermarkMessage]" 
+				is="#[MunitTools::equalTo('Watermark not found')]" 
+				message="Message should indicate watermark not found" />
+		</munit:validation>
+	</munit:test>
+
+</mule>

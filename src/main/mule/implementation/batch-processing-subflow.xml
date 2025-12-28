@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- ============================================== -->
+	<!-- BATCH PROCESSING SUBFLOWS                     -->
+	<!-- Business logic for record processing          -->
+	<!-- ============================================== -->
+
+	<!-- ============================================== -->
+	<!-- BILLING PROCESSING SUBFLOWS                   -->
+	<!-- ============================================== -->
+
+	<!-- Validate Billing Record -->
+	<sub-flow name="batch-processing-validate-subflow" doc:name="Validate Billing Record Subflow">
+		<logger level="DEBUG" doc:name="Log Validating Record"
+			message='#["[DEBUG] Validating billing record | RecordId: " ++ (payload.id as String default "unknown")]' />
+		
+		<ee:transform doc:name="Validate Record">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var record = payload
+var validationErrors = []
+	++ (if (record.customer_id == null) ["customer_id is required"] else [])
+	++ (if (record.account_number == null) ["account_number is required"] else [])
+	++ (if (record.usage_amount == null or record.usage_amount < 0) ["usage_amount must be a positive number"] else [])
+	++ (if (record.billing_period_start == null) ["billing_period_start is required"] else [])
+	++ (if (record.billing_period_end == null) ["billing_period_end is required"] else [])
+---
+{
+	record: record,
+	isValid: isEmpty(validationErrors),
+	validationErrors: validationErrors
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		
+		<!-- Raise error if validation fails -->
+		<choice doc:name="Check Validation Result">
+			<when expression="#[payload.isValid == false]">
+				<raise-error doc:name="Raise Validation Error" 
+					type="APP:VALIDATION_ERROR" 
+					description='#["Validation failed: " ++ (payload.validationErrors joinBy ", ")]' />
+			</when>
+			<otherwise>
+				<set-payload value="#[payload.record]" doc:name="Set Valid Record" />
+			</otherwise>
+		</choice>
+	</sub-flow>
+
+	<!-- Transform Billing Record -->
+	<sub-flow name="batch-processing-transform-subflow" doc:name="Transform Billing Record Subflow">
+		<logger level="DEBUG" doc:name="Log Transforming Record"
+			message='#["[DEBUG] Transforming billing record | RecordId: " ++ (payload.id as String default "unknown")]' />
+		
+		<ee:transform doc:name="Transform Record">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+{
+	id: payload.id,
+	customerId: payload.customer_id,
+	accountNumber: payload.account_number,
+	billingPeriodStart: payload.billing_period_start,
+	billingPeriodEnd: payload.billing_period_end,
+	usageAmount: payload.usage_amount as Number,
+	ratePlanId: payload.rate_plan_id,
+	status: "PROCESSING",
+	originalStatus: payload.status,
+	createdAt: payload.created_at,
+	updatedAt: payload.updated_at,
+	processedAt: now()
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</sub-flow>
+
+	<!-- Calculate Billing Amounts -->
+	<sub-flow name="batch-processing-calculate-subflow" doc:name="Calculate Billing Subflow">
+		<logger level="DEBUG" doc:name="Log Calculating Billing"
+			message='#["[DEBUG] Calculating billing amounts | RecordId: " ++ (payload.id as String default "unknown")]' />
+		
+		<ee:transform doc:name="Calculate Amounts">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var baseRate = 0.10
+var taxRate = 0.08
+var usageAmount = payload.usageAmount as Number default 0
+var subtotal = usageAmount * baseRate
+var taxAmount = subtotal * taxRate
+var totalAmount = subtotal + taxAmount
+---
+payload ++ {
+	baseRate: baseRate,
+	subtotal: subtotal,
+	taxRate: taxRate,
+	taxAmount: taxAmount,
+	totalAmount: totalAmount,
+	currency: "USD",
+	calculatedAt: now()
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</sub-flow>
+
+	<!-- ============================================== -->
+	<!-- INVOICE PROCESSING SUBFLOWS                   -->
+	<!-- ============================================== -->
+
+	<!-- Validate Customer for Invoice -->
+	<sub-flow name="batch-processing-validate-customer-subflow" doc:name="Validate Customer Subflow">
+		<logger level="DEBUG" doc:name="Log Validating Customer"
+			message='#["[DEBUG] Validating customer for invoice | CustomerId: " ++ (payload.customer_id as String default "unknown")]' />
+		
+		<ee:transform doc:name="Validate Customer">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var record = payload
+var validationErrors = []
+	++ (if (record.customer_id == null) ["customer_id is required"] else [])
+	++ (if (record.customer_name == null or isEmpty(record.customer_name)) ["customer_name is required"] else [])
+	++ (if (record.customer_email == null or isEmpty(record.customer_email)) ["customer_email is required"] else [])
+	++ (if (record.billing_address == null) ["billing_address is required"] else [])
+	++ (if (record.total_amount == null or record.total_amount <= 0) ["total_amount must be positive"] else [])
+---
+{
+	record: record,
+	isValid: isEmpty(validationErrors),
+	validationErrors: validationErrors
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		
+		<!-- Raise error if validation fails -->
+		<choice doc:name="Check Customer Validation">
+			<when expression="#[payload.isValid == false]">
+				<raise-error doc:name="Raise Customer Validation Error" 
+					type="APP:CUSTOMER_VALIDATION_ERROR" 
+					description='#["Customer validation failed: " ++ (payload.validationErrors joinBy ", ")]' />
+			</when>
+			<otherwise>
+				<set-payload value="#[payload.record]" doc:name="Set Valid Customer Record" />
+			</otherwise>
+		</choice>
+	</sub-flow>
+
+	<!-- Generate Invoice -->
+	<sub-flow name="batch-processing-generate-invoice-subflow" doc:name="Generate Invoice Subflow">
+		<logger level="DEBUG" doc:name="Log Generating Invoice"
+			message='#["[DEBUG] Generating invoice | CustomerId: " ++ (payload.customer_id as String default "unknown")]' />
+		
+		<ee:transform doc:name="Generate Invoice Structure">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var invoiceNumber = "INV-" ++ (now() as String {format: "yyyyMMdd"}) ++ "-" ++ (uuid() splitBy("-"))[0]
+---
+{
+	invoiceNumber: invoiceNumber,
+	customerId: payload.customer_id,
+	customerName: payload.customer_name,
+	customerEmail: payload.customer_email,
+	billingAddress: payload.billing_address,
+	taxId: payload.tax_id,
+	billingId: payload.billing_id,
+	billingPeriodStart: payload.billing_period_start,
+	billingPeriodEnd: payload.billing_period_end,
+	subtotal: payload.total_amount,
+	taxAmount: payload.tax_amount,
+	invoiceDate: now(),
+	dueDate: now() + |P30D|,
+	status: "GENERATED",
+	createdAt: now()
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</sub-flow>
+
+	<!-- Calculate Invoice Totals -->
+	<sub-flow name="batch-processing-calculate-totals-subflow" doc:name="Calculate Invoice Totals Subflow">
+		<logger level="DEBUG" doc:name="Log Calculating Totals"
+			message='#["[DEBUG] Calculating invoice totals | InvoiceNumber: " ++ (payload.invoiceNumber default "unknown")]' />
+		
+		<ee:transform doc:name="Calculate Final Totals">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var subtotal = payload.subtotal as Number default 0
+var taxAmount = payload.taxAmount as Number default 0
+var totalAmount = subtotal + taxAmount
+---
+payload ++ {
+	totalAmount: totalAmount,
+	currency: "USD",
+	calculatedAt: now()
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</sub-flow>
+
+</mule>

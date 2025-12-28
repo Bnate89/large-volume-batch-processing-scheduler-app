@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xsi:schemaLocation="
+		http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+		http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd">
+
+	<!-- ============================================== -->
+	<!-- BATCH INPUT SUBFLOWS                          -->
+	<!-- Data retrieval from source systems            -->
+	<!-- ============================================== -->
+
+	<!-- Billing Records Input -->
+	<sub-flow name="batch-input-billing-subflow" doc:name="Batch Input Billing Subflow">
+		<logger level="DEBUG" doc:name="Log Fetching Billing Records"
+			message='#["[DEBUG] Fetching billing records | JobId: " ++ vars.jobId ++ " | Since: " ++ (vars.lastProcessedTimestamp as String)]' />
+		
+		<db:select doc:name="Select Billing Records" config-ref="Database_Source_Config">
+			<db:sql><![CDATA[
+				SELECT 
+					id,
+					customer_id,
+					account_number,
+					billing_period_start,
+					billing_period_end,
+					usage_amount,
+					rate_plan_id,
+					status,
+					created_at,
+					updated_at
+				FROM billing_records
+				WHERE updated_at > :lastProcessedTimestamp
+				AND status = 'PENDING'
+				ORDER BY updated_at ASC
+			]]></db:sql>
+			<db:input-parameters>#[{
+				'lastProcessedTimestamp': vars.lastProcessedTimestamp
+			}]</db:input-parameters>
+		</db:select>
+		
+		<!-- Track max timestamp for watermark update -->
+		<set-variable variableName="maxProcessedTimestamp" 
+			value="#[if (sizeOf(payload) > 0) max(payload map $.updated_at) else vars.lastProcessedTimestamp]" 
+			doc:name="Set Max Processed Timestamp" />
+		
+		<logger level="DEBUG" doc:name="Log Billing Records Retrieved"
+			message='#["[DEBUG] Billing records retrieved | Count: " ++ sizeOf(payload)]' />
+	</sub-flow>
+
+	<!-- Invoice Records Input -->
+	<sub-flow name="batch-input-invoice-subflow" doc:name="Batch Input Invoice Subflow">
+		<logger level="DEBUG" doc:name="Log Fetching Invoice Records"
+			message='#["[DEBUG] Fetching invoice records | JobId: " ++ vars.jobId ++ " | Since: " ++ (vars.lastInvoiceProcessedTimestamp as String)]' />
+		
+		<db:select doc:name="Select Invoice Records" config-ref="Database_Source_Config">
+			<db:sql><![CDATA[
+				SELECT 
+					c.id as customer_id,
+					c.name as customer_name,
+					c.email as customer_email,
+					c.billing_address,
+					c.tax_id,
+					b.id as billing_id,
+					b.billing_period_start,
+					b.billing_period_end,
+					b.total_amount,
+					b.tax_amount,
+					b.status,
+					b.created_at,
+					b.updated_at
+				FROM customers c
+				INNER JOIN billing_summary b ON c.id = b.customer_id
+				WHERE b.updated_at > :lastInvoiceProcessedTimestamp
+				AND b.status = 'READY_FOR_INVOICE'
+				ORDER BY b.updated_at ASC
+			]]></db:sql>
+			<db:input-parameters>#[{
+				'lastInvoiceProcessedTimestamp': vars.lastInvoiceProcessedTimestamp
+			}]</db:input-parameters>
+		</db:select>
+		
+		<!-- Track max timestamp for watermark update -->
+		<set-variable variableName="maxInvoiceProcessedTimestamp" 
+			value="#[if (sizeOf(payload) > 0) max(payload map $.updated_at) else vars.lastInvoiceProcessedTimestamp]" 
+			doc:name="Set Max Invoice Processed Timestamp" />
+		
+		<logger level="DEBUG" doc:name="Log Invoice Records Retrieved"
+			message='#["[DEBUG] Invoice records retrieved | Count: " ++ sizeOf(payload)]' />
+	</sub-flow>
+
+</mule>
